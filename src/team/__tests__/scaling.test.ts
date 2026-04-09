@@ -6,28 +6,47 @@ import { tmpdir } from 'os';
 
 import { scaleUp } from '../scaling.js';
 
-function killTmuxSession(sessionName: string): void {
+function killTmuxPane(paneId: string): void {
   try {
-    execFileSync('tmux', ['kill-session', '-t', sessionName], { stdio: 'pipe' });
-  } catch { /* session may not exist */ }
+    execFileSync('tmux', ['kill-pane', '-t', paneId], { stdio: 'pipe' });
+  } catch { /* pane may not exist */ }
 }
 
 describe('scaleUp duplicate worker guard', () => {
   let cwd: string;
-  const tmuxSessions: string[] = [];
+  const spawnedPaneIds: string[] = [];
 
   afterEach(async () => {
-    for (const session of tmuxSessions) {
-      killTmuxSession(session);
+    // Kill any tmux panes spawned by scaleUp before removing temp dir
+    if (cwd) {
+      try {
+        const configRaw = await readFile(join(cwd, '.omc', 'state', 'team'), 'utf-8').catch(() => '');
+        // Scan all team config files for pane_ids
+        const { readdirSync, readFileSync } = await import('fs');
+        const teamDir = join(cwd, '.omc', 'state', 'team');
+        try {
+          for (const team of readdirSync(teamDir)) {
+            const configPath = join(teamDir, team, 'config.json');
+            try {
+              const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+              for (const worker of config.workers ?? []) {
+                if (worker.pane_id) spawnedPaneIds.push(worker.pane_id);
+              }
+            } catch { /* config may not exist */ }
+          }
+        } catch { /* team dir may not exist */ }
+      } catch { /* best effort */ }
     }
-    tmuxSessions.length = 0;
+    for (const paneId of spawnedPaneIds) {
+      killTmuxPane(paneId);
+    }
+    spawnedPaneIds.length = 0;
     if (cwd) await rm(cwd, { recursive: true, force: true });
   });
 
   it('skips past colliding worker names when next_worker_index is stale', async () => {
     cwd = await mkdtemp(join(tmpdir(), 'omc-scaling-duplicate-'));
     const teamName = 'demo-team';
-    tmuxSessions.push('demo-session');
     const root = join(cwd, '.omc', 'state', 'team', teamName);
     await mkdir(root, { recursive: true });
     await writeFile(join(root, 'config.json'), JSON.stringify({
@@ -72,7 +91,6 @@ describe('scaleUp duplicate worker guard', () => {
   it('self-heals across multiple collisions', async () => {
     cwd = await mkdtemp(join(tmpdir(), 'omc-scaling-skip-'));
     const teamName = 'skip-team';
-    tmuxSessions.push('skip-session');
     const root = join(cwd, '.omc', 'state', 'team', teamName);
     await mkdir(root, { recursive: true });
     await writeFile(join(root, 'config.json'), JSON.stringify({

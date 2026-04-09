@@ -31,6 +31,7 @@ import {
   waitForPaneReady,
 } from './tmux-session.js';
 import { TeamPaths, absPath } from './state-paths.js';
+import { buildLaunchArgs, type CliAgentType } from './model-contract.js';
 
 // ── Environment gate ──────────────────────────────────────────────────────────
 
@@ -182,12 +183,17 @@ export async function scaleUp(
         OMC_TEAM_WORKER: `${sanitized}/${workerName}`,
       };
 
+      const launchArgs = buildLaunchArgs(agentType as CliAgentType, {
+        teamName: sanitized,
+        workerName,
+        cwd: leaderCwd,
+      });
       const cmd = buildWorkerStartCommand({
         teamName: sanitized,
         workerName,
         envVars: extraEnv,
-        launchArgs: [],
-        launchBinary: 'claude',
+        launchArgs,
+        launchBinary: agentType,
         launchCmd: '',
         cwd: leaderCwd,
       });
